@@ -3,7 +3,11 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum ViewMode { #[default] Settings, Messages }
+pub enum ViewMode {
+    #[default]
+    Settings,
+    Messages,
+}
 
 #[derive(Clone, Default, Serialize)]
 pub struct Snapshot {
@@ -23,7 +27,10 @@ pub struct Snapshot {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct IconState { pub connected: bool, pub unread: bool }
+pub struct IconState {
+    pub connected: bool,
+    pub unread: bool,
+}
 
 impl Snapshot {
     pub fn receive(&mut self, message: Message) {
@@ -35,30 +42,54 @@ impl Snapshot {
     }
     pub fn show_view(&mut self, mode: ViewMode) {
         self.view_mode = mode;
-        if mode == ViewMode::Messages { self.unread_count = 0; }
+        if mode == ViewMode::Messages {
+            self.unread_count = 0;
+        }
     }
     pub fn window_changed(&mut self, visible: bool, focused: bool) {
         self.window_visible = visible;
         self.window_focused = focused;
-        if visible && focused && self.view_mode == ViewMode::Messages { self.unread_count = 0; }
+        if visible && focused && self.view_mode == ViewMode::Messages {
+            self.unread_count = 0;
+        }
     }
     pub fn icon(&self) -> IconState {
-        IconState { connected: self.status == "connected", unread: self.unread_count > 0 }
+        IconState {
+            connected: self.status == "connected",
+            unread: self.unread_count > 0,
+        }
     }
     pub fn close_to_tray(&mut self) -> bool {
-        if self.tray_available { self.window_changed(false, false); true } else { false }
+        if self.tray_available {
+            self.window_changed(false, false);
+            true
+        } else {
+            false
+        }
     }
 }
 pub fn startup_view(configured: bool, tray_available: bool) -> Option<ViewMode> {
-    if !configured { Some(ViewMode::Settings) }
-    else if !tray_available { Some(ViewMode::Messages) }
-    else { None }
+    if !configured {
+        Some(ViewMode::Settings)
+    } else if !tray_available {
+        Some(ViewMode::Messages)
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn message(n: usize) -> Message { Message { id: n.to_string(), time: 1, topic: "t".into(), title: String::new(), message: "hello".into() } }
+    fn message(n: usize) -> Message {
+        Message {
+            id: n.to_string(),
+            time: 1,
+            topic: "t".into(),
+            title: String::new(),
+            message: "hello".into(),
+        }
+    }
     #[test]
     fn background_messages_are_unread_but_opening_the_feed_clears_them() {
         let mut state = Snapshot::default();
@@ -91,7 +122,9 @@ mod tests {
     #[test]
     fn unread_count_is_independent_of_bounded_message_list_and_connection_status() {
         let mut state = Snapshot::default();
-        for i in 0..150 { state.receive(message(i)); }
+        for i in 0..150 {
+            state.receive(message(i));
+        }
         state.status = "reconnecting".into();
         assert_eq!(state.messages.len(), 100);
         assert_eq!(state.unread_count, 150);
@@ -100,13 +133,37 @@ mod tests {
     #[test]
     fn unread_and_connection_have_four_distinct_icon_states() {
         let mut state = Snapshot::default();
-        assert_eq!(state.icon(), IconState {connected: false, unread: false});
+        assert_eq!(
+            state.icon(),
+            IconState {
+                connected: false,
+                unread: false
+            }
+        );
         state.status = "connected".into();
-        assert_eq!(state.icon(), IconState {connected: true, unread: false});
+        assert_eq!(
+            state.icon(),
+            IconState {
+                connected: true,
+                unread: false
+            }
+        );
         state.receive(message(1));
-        assert_eq!(state.icon(), IconState {connected: true, unread: true});
+        assert_eq!(
+            state.icon(),
+            IconState {
+                connected: true,
+                unread: true
+            }
+        );
         state.status = "error".into();
-        assert_eq!(state.icon(), IconState {connected: false, unread: true});
+        assert_eq!(
+            state.icon(),
+            IconState {
+                connected: false,
+                unread: true
+            }
+        );
     }
     #[test]
     fn startup_only_hides_when_configured_and_tray_is_available() {
@@ -117,7 +174,10 @@ mod tests {
     }
     #[test]
     fn closing_hides_only_with_a_working_tray_and_stops_reading() {
-        let mut state = Snapshot { tray_available: true, ..Default::default() };
+        let mut state = Snapshot {
+            tray_available: true,
+            ..Default::default()
+        };
         state.show_view(ViewMode::Messages);
         state.window_changed(true, true);
         assert!(state.close_to_tray());

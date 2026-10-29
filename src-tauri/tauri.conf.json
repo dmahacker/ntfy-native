@@ -13,6 +13,8 @@
     "windows": [
       {
         "title": "ntfy-native",
+        "visible": false,
+        "skipTaskbar": true,
         "width": 1040,
         "height": 760,
         "minWidth": 400,
