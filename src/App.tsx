@@ -6,17 +6,19 @@ import "./App.css";
 
 interface Config { server: string; topic: string; username: string; password: string }
 interface Message { id: string; time: number; topic: string; title: string; message: string }
+type ViewMode = "settings" | "messages";
 interface Snapshot {
   revision: number; status: string; detail: string;
   notification_error: string | null; messages: Message[];
+  view_mode: ViewMode; unread_count: number; tray_available: boolean; tray_error: string | null;
 }
 const emptyConfig: Config = { server: "", topic: "", username: "", password: "" };
-const initialSnapshot: Snapshot = { revision: -1, status: "disconnected", detail: "尚未连接", notification_error: null, messages: [] };
+const initialSnapshot: Snapshot = { revision: -1, status: "disconnected", detail: "尚未连接", notification_error: null, messages: [], view_mode: "settings", unread_count: 0, tray_available: false, tray_error: null };
 const statusLabels: Record<string, string> = { disconnected: "未连接", connecting: "连接中", connected: "已连接", reconnecting: "重连中", error: "连接失败" };
 
-async function notificationPermission(): Promise<string> {
+async function notificationPermission(request = true): Promise<string> {
   try {
-    if (await isPermissionGranted() || await requestPermission() === "granted") return "";
+    if (await isPermissionGranted() || (request && await requestPermission() === "granted")) return "";
     return "通知权限未获准，仍会接收消息；请在系统设置中允许通知。";
   } catch {
     return "无法检查通知权限，请确认系统通知服务可用。";
@@ -46,10 +48,10 @@ function App() {
         if (!active) return;
         if (saved) {
           setConfig(saved);
-          const warning = await notificationPermission();
+          const warning = await notificationPermission(false);
           if (!active) return;
           setPermissionWarning(warning);
-          await invoke("connect", { config: saved });
+          // Rust owns the subscription; mounting this view must never reconnect.
         }
       } catch (cause) {
         if (active) setError(String(cause));
@@ -78,16 +80,34 @@ function App() {
 
   function field(name: keyof Config, value: string) { setConfig(previous => ({ ...previous, [name]: value })); }
 
+  async function showView(mode: ViewMode) {
+    setBusy(true); setError("");
+    try { await invoke("show_view", { mode }); }
+    catch (cause) { setError(String(cause)); }
+    finally { setBusy(false); }
+  }
+
   return (
     <main className="app-shell">
       <header className="app-header">
         <div><span className="eyebrow">YOUR NOTIFICATIONS, ON YOUR DESKTOP</span><h1>ntfy<span>native</span></h1></div>
         <span className={`status-badge ${snapshot.status}`}><span aria-hidden="true">●</span> {statusLabels[snapshot.status] ?? "未连接"}</span>
       </header>
+      <nav className="view-navigation" aria-label="窗口视图">
+        <button type="button" disabled={busy} aria-current={snapshot.view_mode === "messages" ? "page" : undefined} onClick={() => void showView("messages")}>查看消息</button>
+        <button type="button" disabled={busy} aria-current={snapshot.view_mode === "settings" ? "page" : undefined} onClick={() => void showView("settings")}>连接设置</button>
+      </nav>
+      <div className="window-feedback">
+        <p className="connection-detail" role="status">{busy ? "正在处理…" : snapshot.detail || "尚未连接"}</p>
+        {error && <p className="error" role="alert">{error}</p>}
+        {permissionWarning && <p className="warning" role="alert">{permissionWarning}</p>}
+        {snapshot.notification_error && <p className="warning" role="alert">{snapshot.notification_error}</p>}
+        {snapshot.tray_error && <p className="warning" role="alert">{snapshot.tray_error}</p>}
+      </div>
       <div className="workspace">
-        <section className="panel settings" aria-labelledby="settings-title">
+        {snapshot.view_mode === "settings" && <section className="panel settings" aria-labelledby="settings-title">
           <h2 id="settings-title">连接设置</h2>
-          <p className="muted">连接你的 ntfy，订阅重要消息。</p>
+          <p className="muted">保存后在托盘中接收消息，需要时再打开这里。</p>
           <form onSubmit={event => { event.preventDefault(); void action("connect"); }}>
             <fieldset disabled={busy}>
               <label htmlFor="server">服务器地址</label>
@@ -107,13 +127,9 @@ function App() {
               </div>
             </fieldset>
           </form>
-        </section>
-        <section className="panel feed" aria-labelledby="feed-title">
+        </section>}
+        {snapshot.view_mode === "messages" && <section className="panel feed" aria-labelledby="feed-title">
           <div className="feed-header"><h2 id="feed-title">消息</h2><span className="count">{snapshot.messages.length} / 100</span></div>
-          <p className="connection-detail" role="status">{busy ? "正在处理…" : snapshot.detail || "尚未连接"}</p>
-          {error && <p className="error" role="alert">{error}</p>}
-          {permissionWarning && <p className="warning" role="alert">{permissionWarning}</p>}
-          {snapshot.notification_error && <p className="warning" role="alert">{snapshot.notification_error}</p>}
           {snapshot.messages.length === 0 ? (
             <div className="empty-state"><div aria-hidden="true" className="empty-icon">✳</div><h3>等待下一条消息</h3><p>连接后，新消息会出现在这里，<br />并通过系统通知提醒你。</p></div>
           ) : (
@@ -124,9 +140,9 @@ function App() {
               </li>
             ))}</ol>
           )}
-          <footer>仅保留当前连接最近 100 条消息 · 关闭应用后停止接收</footer>
-        </section>
+        </section>}
       </div>
+      <footer>仅保留当前连接最近 100 条消息 · {snapshot.tray_available ? "关闭窗口后仍在托盘接收，通过托盘菜单退出" : "关闭窗口将退出程序"}</footer>
     </main>
   );
 }
