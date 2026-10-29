@@ -13,12 +13,15 @@
     "windows": [
       {
         "title": "ntfy-native",
-        "width": 800,
-        "height": 600
+        "width": 1040,
+        "height": 760,
+        "minWidth": 400,
+        "minHeight": 550
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'self'; form-action 'none'",
+      "devCsp": "default-src 'self'; connect-src ipc: http://ipc.localhost http://localhost:1420 ws://localhost:1420; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; form-action 'none'"
     }
   },
   "bundle": {

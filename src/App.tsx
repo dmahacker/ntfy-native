@@ -1,49 +1,132 @@
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 import "./App.css";
 
-function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+interface Config { server: string; topic: string; username: string; password: string }
+interface Message { id: string; time: number; topic: string; title: string; message: string }
+interface Snapshot {
+  revision: number; status: string; detail: string;
+  notification_error: string | null; messages: Message[];
+}
+const emptyConfig: Config = { server: "", topic: "", username: "", password: "" };
+const initialSnapshot: Snapshot = { revision: -1, status: "disconnected", detail: "尚未连接", notification_error: null, messages: [] };
+const statusLabels: Record<string, string> = { disconnected: "未连接", connecting: "连接中", connected: "已连接", reconnecting: "重连中", error: "连接失败" };
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
+async function notificationPermission(): Promise<string> {
+  try {
+    if (await isPermissionGranted() || await requestPermission() === "granted") return "";
+    return "通知权限未获准，仍会接收消息；请在系统设置中允许通知。";
+  } catch {
+    return "无法检查通知权限，请确认系统通知服务可用。";
+  }
+}
+
+function App() {
+  const [config, setConfig] = useState<Config>(emptyConfig);
+  const [snapshot, setSnapshot] = useState<Snapshot>(initialSnapshot);
+  const [busy, setBusy] = useState(true);
+  const [error, setError] = useState("");
+  const [permissionWarning, setPermissionWarning] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    let unlisten: (() => void) | undefined;
+    const apply = (next: Snapshot) => {
+      if (active) setSnapshot(previous => next.revision >= previous.revision ? next : previous);
+    };
+    async function initialize() {
+      try {
+        const cleanup = await listen<Snapshot>("subscription-state", event => apply(event.payload));
+        if (!active) { cleanup(); return; }
+        unlisten = cleanup;
+        apply(await invoke<Snapshot>("get_snapshot"));
+        const saved = await invoke<Config | null>("load_settings");
+        if (!active) return;
+        if (saved) {
+          setConfig(saved);
+          const warning = await notificationPermission();
+          if (!active) return;
+          setPermissionWarning(warning);
+          await invoke("connect", { config: saved });
+        }
+      } catch (cause) {
+        if (active) setError(String(cause));
+      } finally {
+        if (active) setBusy(false);
+      }
+    }
+    void initialize();
+    return () => { active = false; unlisten?.(); };
+  }, []);
+
+  async function action(command: "connect" | "disconnect" | "clear_settings") {
+    setBusy(true); setError("");
+    try {
+      if (command === "connect") {
+        setPermissionWarning(await notificationPermission());
+        await invoke(command, { config: { ...config, server: config.server.trim(), topic: config.topic.trim() } });
+      } else {
+        await invoke(command);
+        if (command === "clear_settings") { setConfig(emptyConfig); setPermissionWarning(""); }
+      }
+    } catch (cause) {
+      setError(String(cause));
+    } finally { setBusy(false); }
   }
 
+  function field(name: keyof Config, value: string) { setConfig(previous => ({ ...previous, [name]: value })); }
+
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
+    <main className="app-shell">
+      <header className="app-header">
+        <div><span className="eyebrow">YOUR NOTIFICATIONS, ON YOUR DESKTOP</span><h1>ntfy<span>native</span></h1></div>
+        <span className={`status-badge ${snapshot.status}`}><span aria-hidden="true">●</span> {statusLabels[snapshot.status] ?? "未连接"}</span>
+      </header>
+      <div className="workspace">
+        <section className="panel settings" aria-labelledby="settings-title">
+          <h2 id="settings-title">连接设置</h2>
+          <p className="muted">连接你的 ntfy，订阅重要消息。</p>
+          <form onSubmit={event => { event.preventDefault(); void action("connect"); }}>
+            <fieldset disabled={busy}>
+              <label htmlFor="server">服务器地址</label>
+              <input id="server" type="url" required placeholder="https://ntfy.example.com" value={config.server} onChange={event => field("server", event.target.value)} autoCapitalize="none" spellCheck={false} />
+              <label htmlFor="topic">订阅主题</label>
+              <input id="topic" required maxLength={64} pattern="[A-Za-z0-9_-]+" placeholder="my-alerts" value={config.topic} onChange={event => field("topic", event.target.value)} autoCapitalize="none" spellCheck={false} />
+              <label htmlFor="username">用户名</label>
+              <input id="username" required autoComplete="username" value={config.username} onChange={event => field("username", event.target.value)} autoCapitalize="none" spellCheck={false} />
+              <label htmlFor="password">密码</label>
+              <input id="password" type="password" required autoComplete="current-password" value={config.password} onChange={event => field("password", event.target.value)} />
+              <p className="security-note">配置会自动保留，密码以明文存储在本机应用配置目录。请勿共享配置文件。</p>
+              {config.server.trim().toLowerCase().startsWith("http:") && <p className="warning">HTTP 会以明文传输用户名、密码和消息，建议使用 HTTPS。</p>}
+              <button className="primary" type="submit">保存并连接</button>
+              <div className="secondary-actions">
+                <button type="button" onClick={() => void action("disconnect")}>断开连接</button>
+                <button type="button" className="danger" onClick={() => void action("clear_settings")}>清除配置</button>
+              </div>
+            </fieldset>
+          </form>
+        </section>
+        <section className="panel feed" aria-labelledby="feed-title">
+          <div className="feed-header"><h2 id="feed-title">消息</h2><span className="count">{snapshot.messages.length} / 100</span></div>
+          <p className="connection-detail" role="status">{busy ? "正在处理…" : snapshot.detail || "尚未连接"}</p>
+          {error && <p className="error" role="alert">{error}</p>}
+          {permissionWarning && <p className="warning" role="alert">{permissionWarning}</p>}
+          {snapshot.notification_error && <p className="warning" role="alert">{snapshot.notification_error}</p>}
+          {snapshot.messages.length === 0 ? (
+            <div className="empty-state"><div aria-hidden="true" className="empty-icon">✳</div><h3>等待下一条消息</h3><p>连接后，新消息会出现在这里，<br />并通过系统通知提醒你。</p></div>
+          ) : (
+            <ol className="messages" aria-label="收到的消息">{snapshot.messages.map(message => (
+              <li key={message.id} className="message-card">
+                <div className="message-meta"><span>{message.topic}</span><time dateTime={new Date(message.time * 1000).toISOString()}>{new Date(message.time * 1000).toLocaleString()}</time></div>
+                <h3>{message.title || message.topic}</h3><p>{message.message}</p>
+              </li>
+            ))}</ol>
+          )}
+          <footer>仅保留当前连接最近 100 条消息 · 关闭应用后停止接收</footer>
+        </section>
       </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
     </main>
   );
 }
