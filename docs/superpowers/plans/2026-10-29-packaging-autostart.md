@@ -38,23 +38,32 @@
 
 ## 任务 1：登录自启动设置
 
-- [ ] 检查官方插件文档和项目权限结构，确定 macOS 启动机制及 Linux AppImage 路径处理。
-- [ ] 先写控件测试：读取已开启/关闭；初始读取失败禁用；开启/关闭成功后重新读取；写入失败显示错误；操作中禁用；清除凭据不修改自启动。
-- [ ] 运行 `pnpm test`，确认新增用例因控件未实现而失败。
-- [ ] 加入官方插件依赖、Rust 注册及最小权限，实现独立控件并挂到设置页，默认不调用 enable。
-- [ ] 运行 `pnpm test`、`pnpm build` 和 Rust 测试，确认通过。
+- [x] 检查官方插件文档和项目权限结构，确定 macOS LaunchAgent 及插件的 Linux AppImage 路径处理。
+- [x] 控件集成测试放入现有 `src/App.test.tsx`，通过真实插件 JS 绑定和 IPC 替身验证状态、失败、回读、禁用与凭据独立性。
+- [x] 运行 `pnpm test`，观察新增 9 个用例因缺少自启动设置而失败，再实现并验证通过。
+- [x] 加入官方插件依赖、Rust 注册及最小权限，实现独立控件并挂到设置页，默认不调用 enable。
+- [x] 运行 `pnpm test`、`pnpm build` 和 Rust 测试，确认通过。
 
 ## 任务 2：安装包与发布
 
-- [ ] 配置 bundle 元数据和打包脚本；各平台通过 CLI bundles 参数指定格式，不强迫其他平台构建不可用格式。
-- [ ] 编写 GitHub Actions：标签 `v*` 触发，版本一致性预检，最小权限，三平台四架构矩阵，安装系统依赖和锁定依赖，执行测试并构建安装包。
-- [ ] 将所有构建产物上传为 workflow artifacts，仅全部构建成功后创建或更新 draft Release 并附加安装包，供人工检查发布。
-- [ ] 验证 YAML（使用可用的 actionlint）及 Tauri 配置，运行本机 Linux 打包；明确记录工具或依赖限制。
-- [ ] 更新 README：安装格式、产物路径、标签发布、未签名提示、自启动启停和 AppImage 稳定路径要求。
+- [x] 配置 bundle 元数据和打包脚本；各平台通过 CLI bundles 参数指定格式。
+- [x] 编写 GitHub Actions：标签 `v*` 触发，版本一致性预检，最小权限，三平台四架构矩阵，执行测试并构建安装包；版本检查另有真实 CLI 回归测试。
+- [x] 配置 workflow artifacts；仅全部构建成功且六个包齐全后创建或更新草稿 Release，不修改已发布 Release（尚未推送运行）。
+- [x] actionlint 及 Tauri 配置验证通过；本机 Linux 编译并生成 deb、rpm、AppImage。
+- [x] 更新 README：安装格式、产物路径、标签发布、未签名提示、自启动启停和 AppImage 稳定路径要求。
 
 ## 任务 3：最终验证与交付
 
-- [ ] 运行 `pnpm test`、`pnpm build`、`cargo test --manifest-path src-tauri/Cargo.toml`、`cargo fmt --manifest-path src-tauri/Cargo.toml --check`、`cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`。
-- [ ] 检查改动文件诊断和 `git diff --check`，自审插件权限、错误状态和发布条件。
-- [ ] 报告真实 Linux 构建结果，不把 CI 配置等同于 Windows/macOS 已验证；登录重启、通知、安装卸载和签名验收明确留给对应桌面环境。
-- [ ] 不自动合并或推送；交付工作区、改动摘要和可用安装包路径。
+- [x] 运行 pnpm test（27 项）、pnpm build、cargo test（19 项）、cargo fmt、cargo clippy -D warnings、cargo check --all-targets，均通过。
+- [x] 检查 LSP 与 git diff --check，自审插件权限、错误状态和发布条件；未使用子代理。
+- [x] 交付真实 Linux 安装包，明确 Windows/macOS 构建与桌面登录验收未执行。
+- [x] 保留分支和工作区，不自动合并或推送。
+
+## 验证记录与限制
+
+- 真实 Linux release 编译成功；`pnpm tauri bundle --bundles deb,rpm,appimage` 成功复用已编译程序生成三个安装包。deb/rpm 约 4.34 MiB，AppImage 约 103.19 MiB，位于本工作区的 `src-tauri/target/release/bundle/`。
+- 依赖安装使用 frozen lockfile；actionlint、版本检查和 git diff --check 通过。
+- 自启动测试覆盖正确命令、失败回读和状态未知，不修改当前用户系统登录项；实际安装卸载、注销再登录和通知弹窗需要桌面验收。
+- LSP 探测的 TypeScript 检查未能确认 clean；Rust analyzer 给出 bool 取反及宏展开等异常诊断，但实际 cargo check/tests/Clippy 全部编译通过。没有宣称 LSP 全绿。
+- 没有运行远端 CI、推送分支或标签、创建 Release、配置代码签名或公证；Windows/macOS 仍需对应系统构建验收。
+- 作者自审，不等同于独立审查。
