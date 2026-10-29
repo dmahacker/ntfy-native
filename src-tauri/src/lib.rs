@@ -38,7 +38,7 @@ async fn update(app: &AppHandle, view: &Mutex<Snapshot>, change: impl FnOnce(&mu
     snapshot.revision += 1;
     let _ = app.emit("subscription-state", &*snapshot);
     if app.state::<Backend>().tray_available.load(Ordering::SeqCst) {
-        let next = snapshot.clone();
+        let next = tray::Presentation::from(&*snapshot);
         let handle = app.clone();
         if app
             .run_on_main_thread(move || {
@@ -83,6 +83,7 @@ fn tray_unavailable(app: &AppHandle) {
         let _ = app.emit("subscription-state", &*snapshot);
         drop(snapshot);
         if let Some(window) = app.get_webview_window("main") {
+            let _ = window.set_skip_taskbar(false);
             let _ = window.show();
             let _ = window.set_focus();
         }
@@ -103,9 +104,22 @@ async fn hide_window(app: &AppHandle) -> Result<(), String> {
         update(app, &backend.view, |v| v.window_changed(true, false)).await;
         return Err("无法隐藏窗口，程序仍在运行".into());
     }
+    // A tray update may have failed while hide() was being dispatched.
+    if !backend.tray_available.load(Ordering::SeqCst) {
+        window.show().map_err(|_| "托盘不可用且无法恢复窗口")?;
+    }
     Ok(())
 }
 
+fn window_activity(app: &AppHandle) -> (bool, bool) {
+    let Some(window) = app.get_webview_window("main") else {
+        return (false, false);
+    };
+    (
+        window.is_visible().unwrap_or(false) && !window.is_minimized().unwrap_or(false),
+        window.is_focused().unwrap_or(false),
+    )
+}
 async fn open_view(app: &AppHandle, mode: ViewMode) -> Result<(), String> {
     let window = app.get_webview_window("main").ok_or("无法找到应用窗口")?;
     window.unminimize().map_err(|_| "无法恢复应用窗口")?;
@@ -149,6 +163,9 @@ async fn initialize(app: AppHandle, tray_available: bool) {
     let saved = config_path(&app).and_then(|path| config::load(&path));
     let configured = matches!(saved, Ok(Some(_)));
     if let Some(mode) = state::startup_view(configured, tray_available) {
+        if !tray_available && let Some(window) = app.get_webview_window("main") {
+            let _ = window.set_skip_taskbar(false);
+        }
         let _ = open_view(&app, mode).await;
     }
     match saved {
@@ -280,11 +297,13 @@ async fn run_subscription(
                             .body(&message.message)
                             .show()
                             .is_err();
+                        let (visible, focused) = window_activity(&app);
                         update(&app, &view, |v| {
                             if failed {
                                 v.notification_error =
                                     Some("系统通知发送失败，请检查桌面通知服务及应用权限".into());
                             }
+                            v.window_changed(visible, focused);
                             v.receive(message);
                         })
                         .await;
@@ -336,11 +355,9 @@ pub fn run() {
                         }
                     });
                 }
-                tauri::WindowEvent::Focused(focused) => {
-                    let focused = *focused;
-                    let visible = window.is_visible().unwrap_or(false)
-                        && !window.is_minimized().unwrap_or(false);
+                tauri::WindowEvent::Focused(_) => {
                     tauri::async_runtime::spawn(async move {
+                        let (visible, focused) = window_activity(&app);
                         update(&app, &app.state::<Backend>().view, |v| {
                             v.window_changed(visible, focused)
                         })

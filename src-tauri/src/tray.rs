@@ -9,6 +9,17 @@ use tauri::{
 
 const ID: &str = "ntfy-native";
 
+#[cfg(target_os = "linux")]
+fn host_registered(reply: &gio::glib::Variant) -> bool {
+    if reply.type_().as_str() != "(v)" {
+        return false;
+    }
+    reply
+        .get::<(gio::glib::Variant,)>()
+        .and_then(|(value,)| value.get::<bool>())
+        .unwrap_or(false)
+}
+
 // libappindicator's loader panics if its optional shared library is absent.
 // Probe first, and require a real SNI host rather than hiding behind an invisible icon.
 #[cfg(target_os = "linux")]
@@ -30,19 +41,25 @@ pub fn host_available() -> bool {
         return false;
     };
     let Ok(reply) = bus.call_sync(
-        Some("org.freedesktop.DBus"),
-        "/org/freedesktop/DBus",
-        "org.freedesktop.DBus",
-        "NameHasOwner",
-        Some(&("org.kde.StatusNotifierWatcher",).to_variant()),
+        Some("org.kde.StatusNotifierWatcher"),
+        "/StatusNotifierWatcher",
+        "org.freedesktop.DBus.Properties",
+        "Get",
+        Some(
+            &(
+                "org.kde.StatusNotifierWatcher",
+                "IsStatusNotifierHostRegistered",
+            )
+                .to_variant(),
+        ),
         None,
-        gio::DBusCallFlags::NONE,
+        gio::DBusCallFlags::NO_AUTO_START,
         1000,
         None::<&gio::Cancellable>,
     ) else {
         return false;
     };
-    reply.get::<(bool,)>().is_some_and(|(available,)| available)
+    host_registered(&reply)
 }
 #[cfg(not(target_os = "linux"))]
 pub fn host_available() -> bool {
@@ -55,6 +72,22 @@ struct TrayState {
     disconnect: MenuItem<tauri::Wry>,
     icons: [Image<'static>; 4],
     last_icon: Mutex<Option<IconState>>,
+}
+
+// Do not copy the full message history into the native UI event queue.
+pub struct Presentation {
+    status: String,
+    unread_count: usize,
+    icon: IconState,
+}
+impl From<&Snapshot> for Presentation {
+    fn from(snapshot: &Snapshot) -> Self {
+        Self {
+            status: snapshot.status.clone(),
+            unread_count: snapshot.unread_count,
+            icon: snapshot.icon(),
+        }
+    }
 }
 
 fn icon_index(icon: IconState) -> usize {
@@ -124,14 +157,14 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
 }
 
 // Called on the UI thread; the snapshot was copied before queuing this update.
-pub fn refresh(app: &AppHandle, snapshot: &Snapshot) -> tauri::Result<()> {
+pub fn refresh(app: &AppHandle, snapshot: &Presentation) -> tauri::Result<()> {
     let Some(state) = app.try_state::<TrayState>() else {
-        return Ok(());
+        return Err(std::io::Error::other("Tray state unavailable").into());
     };
     let Some(tray) = app.tray_by_id(ID) else {
-        return Ok(());
+        return Err(std::io::Error::other("Tray unavailable").into());
     };
-    let icon = snapshot.icon();
+    let icon = snapshot.icon;
     let mut previous = state.last_icon.lock().unwrap_or_else(|e| e.into_inner());
     if *previous != Some(icon) {
         tray.set_icon(Some(state.icons[icon_index(icon)].clone()))?;
@@ -169,6 +202,17 @@ pub fn refresh(app: &AppHandle, snapshot: &Snapshot) -> tauri::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn watcher_requires_a_registered_host_not_just_a_dbus_name() {
+        use gio::glib::variant::ToVariant;
+        assert!(host_registered(&(true.to_variant(),).to_variant()));
+        assert!(!host_registered(&(false.to_variant(),).to_variant()));
+        assert!(!host_registered(
+            &("not a boolean".to_variant(),).to_variant()
+        ));
+        assert!(!host_registered(&(true,).to_variant()));
+    }
     #[test]
     fn embedded_icons_are_valid_distinct_images_for_all_states() {
         let bytes = [

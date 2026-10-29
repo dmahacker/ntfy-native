@@ -3,13 +3,15 @@ import { copyFileSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 
 // Generate only desktop assets, leaving mobile icon sets in a temporary directory.
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const temporary = mkdtempSync(join(tmpdir(), "ntfy-native-icons-"));
 const destination = join(root, "src-tauri/icons");
+const cli = createRequire(import.meta.url).resolve("@tauri-apps/cli/tauri.js");
 function generate(source, output, extra = []) {
-  const result = spawnSync(process.platform === "win32" ? "pnpm.cmd" : "pnpm", ["exec", "tauri", "icon", join(root, "assets", source), "--output", output, ...extra], { cwd: root, stdio: "inherit" });
+  const result = spawnSync(process.execPath, [cli, "icon", join(root, "assets", source), "--output", output, ...extra], { cwd: root, stdio: "inherit" });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error("Icon generation failed");
 }
