@@ -7,7 +7,7 @@
 ## 环境要求
 
 - Node.js 22.12+（或 20.19+）
-- pnpm 10.34.6
+- pnpm 12.15.0
 - Rust stable（支持 edition 2024）
 - 对应操作系统的 [Tauri 2 开发依赖](https://v2.tauri.app/start/prerequisites/)
 
