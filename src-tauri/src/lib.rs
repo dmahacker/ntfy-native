@@ -331,6 +331,13 @@ async fn run_subscription(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
+        .plugin({
+            let builder = tauri_plugin_autostart::Builder::new();
+            #[cfg(target_os = "macos")]
+            let builder =
+                builder.macos_launcher(tauri_plugin_autostart::MacosLauncher::LaunchAgent);
+            builder.build()
+        })
         .manage(Backend::default())
         .setup(|app| {
             #[cfg(target_os = "macos")]
