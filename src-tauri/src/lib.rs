@@ -1,22 +1,15 @@
 mod config;
 mod subscription;
+mod state;
 
 use config::Config;
-use serde::Serialize;
+use state::Snapshot;
 use std::{path::PathBuf, sync::Arc, time::Duration};
-use subscription::{Decoder, Message, Recent};
+use subscription::{Decoder, Recent};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_notification::NotificationExt;
 use tokio::sync::Mutex;
 
-#[derive(Clone, Default, Serialize)]
-struct Snapshot {
-    revision: u64,
-    status: String,
-    detail: String,
-    notification_error: Option<String>,
-    messages: Vec<Message>,
-}
 
 #[derive(Default)]
 struct Backend {
@@ -166,8 +159,7 @@ async fn run_subscription(
                                 v.notification_error =
                                     Some("系统通知发送失败，请检查桌面通知服务及应用权限".into());
                             }
-                            v.messages.insert(0, message);
-                            v.messages.truncate(100);
+                            v.receive(message);
                         })
                         .await;
                     }
