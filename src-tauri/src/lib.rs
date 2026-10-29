@@ -1,4 +1,6 @@
 mod config;
+mod notification;
+mod preferences;
 mod state;
 mod subscription;
 mod tray;
@@ -15,7 +17,6 @@ use std::{
 };
 use subscription::{Decoder, Recent};
 use tauri::{AppHandle, Emitter, Manager, State};
-use tauri_plugin_notification::NotificationExt;
 use tokio::sync::Mutex;
 
 #[derive(Default)]
@@ -23,6 +24,7 @@ struct Backend {
     task: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
     view: Arc<Mutex<Snapshot>>,
     tray_available: AtomicBool,
+    preferences: Mutex<preferences::Preferences>,
 }
 
 fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -30,6 +32,36 @@ fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
         .app_config_dir()
         .map(|dir| dir.join("connection.json"))
         .map_err(|_| "无法定位应用配置目录".into())
+}
+
+fn preferences_path(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_config_dir()
+        .map(|dir| dir.join("preferences.json"))
+        .map_err(|_| "无法定位应用配置目录".into())
+}
+#[tauri::command]
+async fn get_sound_enabled(app: AppHandle, backend: State<'_, Backend>) -> Result<bool, String> {
+    let mut settings = backend.preferences.lock().await;
+    *settings = preferences::load(&preferences_path(&app)?)?;
+    Ok(settings.sound_enabled)
+}
+#[tauri::command]
+async fn set_sound_enabled(
+    app: AppHandle,
+    backend: State<'_, Backend>,
+    enabled: bool,
+) -> Result<(), String> {
+    let mut settings = backend.preferences.lock().await;
+    let next = preferences::Preferences {
+        sound_enabled: enabled,
+    };
+    next.save(&preferences_path(&app)?)?;
+    *settings = next;
+    Ok(())
+}
+async fn mark_all_read(app: &AppHandle) {
+    update(app, &app.state::<Backend>().view, Snapshot::mark_all_read).await;
 }
 
 async fn update(app: &AppHandle, view: &Mutex<Snapshot>, change: impl FnOnce(&mut Snapshot)) {
@@ -153,6 +185,11 @@ async fn show_operation_error(app: &AppHandle, error: &str) {
 
 async fn initialize(app: AppHandle, tray_available: bool) {
     let backend = app.state::<Backend>();
+    let saved_preferences = preferences_path(&app).and_then(|path| preferences::load(&path));
+    match saved_preferences {
+        Ok(settings) => *backend.preferences.lock().await = settings,
+        Err(error) => update(&app, &backend.view, |v| v.notification_error = Some(error)).await,
+    }
     update(&app, &backend.view, |v| {
         v.tray_available = tray_available;
         if !tray_available {
@@ -290,13 +327,32 @@ async fn run_subscription(
                         } else {
                             message.title.clone()
                         };
-                        let failed = app
-                            .notification()
-                            .builder()
-                            .title(title)
-                            .body(&message.message)
-                            .show()
-                            .is_err();
+                        let sound_enabled = app
+                            .state::<Backend>()
+                            .preferences
+                            .lock()
+                            .await
+                            .sound_enabled;
+                        let notification =
+                            notification::build(&title, &message.message, sound_enabled);
+                        #[cfg(target_os = "macos")]
+                        let _ = notify_rust::set_application(if tauri::is_dev() {
+                            "com.apple.Terminal"
+                        } else {
+                            &app.config().identifier
+                        });
+                        #[cfg(target_os = "windows")]
+                        let notification = {
+                            let mut notification = notification;
+                            notification.app_id(&app.config().identifier);
+                            notification
+                        };
+                        // The native D-Bus call can block; do not stall the async subscription runtime.
+                        let failed = tauri::async_runtime::spawn_blocking(move || {
+                            notification::show(notification).is_err()
+                        })
+                        .await
+                        .unwrap_or(true);
                         let (visible, focused) = window_activity(&app);
                         update(&app, &view, |v| {
                             if failed {
@@ -377,6 +433,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             load_settings,
             get_snapshot,
+            get_sound_enabled,
+            set_sound_enabled,
             connect,
             disconnect,
             clear_settings,

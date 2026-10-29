@@ -33,6 +33,9 @@ pub struct IconState {
 }
 
 impl Snapshot {
+    pub fn mark_all_read(&mut self) {
+        self.unread_count = 0;
+    }
     pub fn receive(&mut self, message: Message) {
         if !(self.view_mode == ViewMode::Messages && self.window_visible && self.window_focused) {
             self.unread_count = self.unread_count.saturating_add(1);
@@ -89,6 +92,23 @@ mod tests {
             title: String::new(),
             message: "hello".into(),
         }
+    }
+    #[test]
+    fn mark_all_read_preserves_messages_connection_and_window() {
+        let mut state = Snapshot {
+            status: "connected".into(),
+            ..Default::default()
+        };
+        state.receive(message(1));
+        state.receive(message(2));
+        state.mark_all_read();
+        assert_eq!(state.unread_count, 0);
+        assert_eq!(state.messages.len(), 2);
+        assert_eq!(state.status, "connected");
+        assert_eq!(state.view_mode, ViewMode::Settings);
+        assert!(!state.window_visible);
+        state.receive(message(3));
+        assert_eq!(state.unread_count, 1);
     }
     #[test]
     fn background_messages_are_unread_but_opening_the_feed_clears_them() {

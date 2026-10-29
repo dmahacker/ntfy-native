@@ -11,7 +11,7 @@ vi.mock("@tauri-apps/plugin-notification", () => ({ isPermissionGranted: mocks.p
 const config = { server: "https://ntfy.example.com", topic: "alerts", username: "alice", password: "secret" };
 const snapshot = { revision: 0, status: "disconnected", detail: "尚未连接", notification_error: null as string | null, messages: [], view_mode: "settings", unread_count: 0, tray_available: true, tray_error: null as string | null };
 function backend(saved: typeof config | null = null, initial = snapshot) {
-  mocks.invoke.mockImplementation(async (command: string) => command === "load_settings" ? saved : command === "get_snapshot" ? initial : command === "plugin:autostart|is_enabled" ? false : undefined);
+  mocks.invoke.mockImplementation(async (command: string) => command === "load_settings" ? saved : command === "get_snapshot" ? initial : command === "get_sound_enabled" ? true : command === "plugin:autostart|is_enabled" ? false : undefined);
 }
 async function ready() { await waitFor(() => expect(screen.getByRole("button", { name: "保存并连接" }).matches(":disabled")).toBe(false)); }
 function publish(payload: object) { act(() => mocks.listen.mock.calls[0][1]({ payload })); }
@@ -19,6 +19,14 @@ beforeEach(() => { mocks.listen.mockResolvedValue(vi.fn()); mocks.permission.moc
 afterEach(cleanup);
 
 describe("tray client windows", () => {
+  it("keeps sound settings independent when credentials are cleared", async () => {
+    backend(config); render(<App />); await ready();
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: "新消息提示音" })).toHaveProperty("checked", true));
+    await userEvent.click(screen.getByRole("button", { name: "清除配置" }));
+    await waitFor(() => expect(screen.getByLabelText("密码")).toHaveProperty("value", ""));
+    expect(screen.getByRole("checkbox", { name: "新消息提示音" })).toHaveProperty("checked", true);
+    expect(mocks.invoke.mock.calls.some(([command]) => command === "set_sound_enabled")).toBe(false);
+  });
   it("restores credentials without starting a duplicate subscription under StrictMode", async () => {
     backend(config); render(<StrictMode><App /></StrictMode>); await ready();
     expect(screen.getByLabelText("密码")).toHaveProperty("value", "secret");

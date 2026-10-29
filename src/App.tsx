@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 import AutostartSetting from "./AutostartSetting";
+import SoundSetting from "./SoundSetting";
 import "./App.css";
 
 interface Config { server: string; topic: string; username: string; password: string }
@@ -129,6 +130,7 @@ function App() {
             </fieldset>
           </form>
           <AutostartSetting />
+          <SoundSetting />
         </section>}
         {snapshot.view_mode === "messages" && <section className="panel feed" aria-labelledby="feed-title">
           <div className="feed-header"><h2 id="feed-title">消息</h2><span className="count">{snapshot.messages.length} / 100</span></div>

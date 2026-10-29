@@ -103,6 +103,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     ];
     let status = MenuItem::with_id(app, "status", "正在初始化…", false, None::<&str>)?;
     let messages = MenuItem::with_id(app, "messages", "查看消息", true, None::<&str>)?;
+    let mark_read = MenuItem::with_id(app, "mark_read", "全部标为已读", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "连接设置", true, None::<&str>)?;
     let connect = MenuItem::with_id(app, "connect", "连接", true, None::<&str>)?;
     let disconnect = MenuItem::with_id(app, "disconnect", "断开", false, None::<&str>)?;
@@ -113,6 +114,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
             &status,
             &PredefinedMenuItem::separator(app)?,
             &messages,
+            &mark_read,
             &settings,
             &connect,
             &disconnect,
@@ -134,6 +136,10 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
             tauri::async_runtime::spawn(async move {
                 let result = match event.id.as_ref() {
                     "messages" => crate::open_view(&app, ViewMode::Messages).await,
+                    "mark_read" => {
+                        crate::mark_all_read(&app).await;
+                        Ok(())
+                    }
                     "settings" => crate::open_view(&app, ViewMode::Settings).await,
                     "connect" => crate::reconnect_saved(&app).await,
                     "disconnect" => crate::disconnect(app.clone(), app.state()).await,
