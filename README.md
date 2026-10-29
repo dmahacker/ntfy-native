@@ -12,12 +12,13 @@
 - 「断开连接」保留配置，「清除配置」删除保存的凭据并断开。
 - 托盘铃铛图标显示四种状态：蓝色正常、蓝色加红点表示未读、灰色加黄色警告表示离线，以及离线且未读。
 - 打开消息列表清除未读；消息列表处于前台时收到的新消息直接视为已读。配置窗口不清除未读，系统通知始终照常发送。
+- 在连接设置中开启 / 关闭「登录后自动启动」，默认不创建登录项；直接读取系统登记状态，修改失败会提示。
 
-消息列表仅保留当前连接最近 100 条，不落盘；手动重新连接会清空列表和未读计数，自动网络重连不会清空。**关闭窗口只隐藏到托盘，托盘菜单「退出」才会结束程序。** 未读数独立于列表长度，不跨进程保存。不含开机启动、多主题、附件或通知操作按钮。
+消息列表仅保留当前连接最近 100 条，不落盘；手动重新连接会清空列表和未读计数，自动网络重连不会清空。**关闭窗口只隐藏到托盘，托盘菜单「退出」才会结束程序。** 未读数独立于列表长度，不跨进程保存。不含多主题、附件、自动更新或通知操作按钮。
 
 ## 环境要求
 
-- Node.js 22.12+（或 20.19+）
+- Node.js 24 LTS（CI 使用；前端工具要求至少 22.12 / 20.19，包管理器另有自身要求）
 - pnpm 12.15.0
 - Rust stable（支持 edition 2024）
 - 对应操作系统的 [Tauri 2 开发依赖](https://v2.tauri.app/start/prerequisites/)
@@ -40,6 +41,33 @@ pnpm tauri dev
 保存配置并开始订阅后，窗口隐藏到托盘；从托盘菜单打开「查看消息」或「连接设置」。已配置时再次启动不弹窗口。配置和消息是独立视图，打开界面不会重新连接或清空消息。没有可用托盘时不会自动隐藏。
 
 仅启动前端预览可运行 `pnpm dev`，但浏览器无法连接 Rust 后端。接收和系统通知必须在 Tauri 桌面应用中使用。
+
+## 安装与登录自启动
+
+从 GitHub Release 下载与你系统、CPU 架构对应的安装包；发行流程先生成 **草稿 Release**，维护者验收并发布后下载链接才会公开。
+
+| 系统 | 安装包 | 安装方式 |
+| --- | --- | --- |
+| Linux x86_64 | `.deb` | 在 Debian / Ubuntu 使用 `sudo apt install ./ntfy-native_版本_amd64.deb`，自动安装运行库 |
+| Linux x86_64 | `.rpm` | 在支持的 RPM 发行版使用 `sudo dnf install ./ntfy-native-版本-1.x86_64.rpm` |
+| Linux x86_64 | `.AppImage` | 放到固定目录，赋予执行权限后运行；无需安装程序 |
+| Windows x86_64 | `*-setup.exe` | 运行 NSIS 安装程序，默认只安装到当前用户；缺少 WebView2 时需要联网安装 |
+| macOS Apple Silicon / Intel | `*_aarch64.dmg` / `*_x64.dmg` | 打开 DMG，把应用拖到 Applications 后运行，不要直接从 DMG 开启自启动 |
+
+**当前没有配置代码签名或 Apple 公证。** Windows 可能出现 SmartScreen 提示；macOS 可能阻止打开或提示无法验证开发者，需要在确认下载来源后按系统提示于「隐私与安全性」允许打开。不要关闭系统全局安全防护。
+
+Linux 的 deb/rpm 会声明 GTK、WebKitGTK 和 AppIndicator 依赖，但桌面仍需提供托盘与通知服务。CI 在 Ubuntu 22.04 构建 Linux 包以降低运行库版本下限；在更新发行版本地构建的安装包不保证可在旧发行版运行。AppImage 也不是完全独立于宿主系统，可能需要 FUSE 2 和兼容的桌面运行库。
+
+### 自启动开关
+
+1. 从托盘打开「连接设置」，找到「启动设置」。
+2. 勾选「登录后自动启动」立即登记当前用户的系统登录项，不需要再次保存连接配置；取消勾选立即移除。
+3. 开启后，在下次**登录桌面**时启动，不是在登录前运行系统服务。有连接配置且托盘可用时只显示托盘并后台连接；否则显示设置窗口。
+4. 「重新读取」可刷新系统登记状态。状态读取失败时显示「未知」并禁用开关；启停失败时提示错误，不假装保存成功。系统策略仍可能阻止实际启动。
+
+自启动由 Tauri 官方插件管理：Linux 使用 XDG autostart，Windows 使用当前用户的启动注册表项，macOS 使用当前用户 LaunchAgent。首次安装默认关闭；升级不会主动改变已有登录项。「清除配置」只删除连接凭据，不会关闭自启动；卸载前请先取消勾选。
+
+**请从最终安装路径开启。** 特别是 AppImage：先移到固定目录再启用；移动或重命名后应从新路径重新关闭 / 开启，以刷新登录项。不要从 `tauri dev` 或临时构建目录开启，否则登录项会指向开发程序。应用不会在未得到用户操作时自动登记登录项。
 
 ## 安全与配置
 
@@ -71,11 +99,24 @@ cargo test --manifest-path src-tauri/Cargo.toml
 cargo fmt --manifest-path src-tauri/Cargo.toml --check
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
-# 构建当前平台的桌面程序和安装包
-pnpm tauri build
+# 在对应系统打包（不是跨系统编译）
+pnpm package:linux       # deb + rpm + AppImage
+pnpm package:windows     # NSIS
+pnpm package:macos       # DMG
 ```
 
-安装包默认输出到 `src-tauri/target/release/bundle/`。跨平台产物应在各自平台构建；签名与发行配置尚未设置。
+安装包默认输出到 `src-tauri/target/release/bundle/`。传入 `--target <triple>` 时输出到 `src-tauri/target/<triple>/release/bundle/`。需要固定 Cargo 依赖时，在打包命令后追加 `-- --locked`。Linux 打包还需 `librsvg`、`patchelf` 等工具；建议使用与 CI 一致的 Ubuntu 22.04 构建环境。
+
+### GitHub Actions 发行
+
+`.github/workflows/release.yml` 提供 Linux x86_64、Windows x86_64、macOS arm64 和 x86_64 四条构建任务，每条都会执行前端测试、Rust 测试、格式检查及 Clippy，然后构建安装包。
+
+- 手动运行 **Build installers**：仅生成 workflow artifacts（保留 14 天），不创建 Release；可先用它验证分支。
+- 正式准备版本时，同步更新 `package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` 及对应锁文件，执行 `pnpm release:check v<版本>` 验证，再提交并推送 `v<版本>` 标签。
+- 标签与三处版本号不一致会在构建前失败；全部构建成功且六个安装包齐全后才创建 / 更新该标签的 **草稿 Release**。不会自动发布，也不会覆盖已发布的 Release。
+- 维护者在各平台安装、验收通知 / 托盘 / 登录自启动后手动发布草稿。没有签名 / 公证配置，也没有自动更新功能。
+
+本地的 `.github/workflows/release.yml` 可使用 `actionlint` 检查；前端测试中也包含版本检查脚本的真实 CLI 测试。本机 Linux 构建成功不能代替 Windows / macOS 构建和安装验收。
 
 ### 桌面验收
 
@@ -86,6 +127,8 @@ pnpm tauri build
 5. 使用错误密码确认认证失败、不无限重试、不抢焦点；通过菜单打开设置修改密码后重试。清除配置后重启应显示配置页。
 6. 菜单「断开」停止接收，菜单「连接」恢复；「退出」后进程退出，托盘消失。
 7. 在无托盘支持的桌面启动，确认保留窗口和明确提示，保存配置不会隐藏，关闭窗口正常退出。检查本机配置文件权限，不要分享文件内容。
+8. 在最终安装路径开启「登录后自动启动」，注销并重新登录，确认只启动一个实例，且按是否已有连接配置正确显示托盘 / 设置；取消勾选后再次登录不启动。分别在 deb/rpm/AppImage、Windows NSIS 和两种 macOS 架构上验收。
+9. 系统登录项不可读 / 不可写时显示明确错误；清除连接配置不会改变自启动状态。AppImage 改名或移动后，从新路径关闭再开启，确认登录项指向新路径。
 
 无图形显示环境的构建 / 单元测试不能替代系统通知和原生窗口的实际验收。
 
@@ -109,6 +152,9 @@ node scripts/generate-icons.mjs
 - `src-tauri/src/lib.rs`：Tauri 命令、连接管理、重连、通知
 - `src-tauri/src/state.rs`：视图、前台状态、未读计数及启动决策
 - `src-tauri/src/tray.rs`：托盘菜单、四态图标及 Linux 支持检查
-- `src-tauri/capabilities/`：最小前端通知权限
+- `src-tauri/capabilities/`：最小前端通知与自启动权限
+- `src/AutostartSetting.tsx`：系统登录自启动开关
+- `scripts/check-release-version.mjs`：标签与三处版本一致性检查
+- `.github/workflows/release.yml`：跨平台安装包与草稿 Release
 
 应用标识暂定为 `com.ntfy.native`，正式发布前应改为自己拥有的唯一标识。

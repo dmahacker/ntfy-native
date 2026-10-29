@@ -1,0 +1,129 @@
+name: Build installers
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: installers-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - name: Check tag and application versions
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node scripts/check-release-version.mjs "$RELEASE_TAG"
+
+  build:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            bundles: deb,rpm,appimage
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundles: nsis
+          - os: macos-15
+            target: aarch64-apple-darwin
+            bundles: dmg
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            bundles: dmg
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@a8198c4bff370c8506180b035930dea56dbd5288 # v5; packageManager pins pnpm
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          targets: ${{ matrix.target }}
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@e9d7b9f1e587218970671bac74e5511ed9506e6a # v2
+        with:
+          workspaces: src-tauri -> target
+          key: ${{ matrix.target }}
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf libfuse2 xdg-utils
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }} --locked
+      - run: cargo clippy --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }} --locked --all-targets -- -D warnings
+      - name: Build installers
+        run: pnpm tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} -- --locked
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: installers-${{ matrix.target }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            src-tauri/target/${{ matrix.target }}/release/bundle/deb/*.deb
+            src-tauri/target/${{ matrix.target }}/release/bundle/rpm/*.rpm
+            src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
+            src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*-setup.exe
+            src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: installers-*
+          path: installers
+          merge-multiple: true
+      - name: Attach all installers to a draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          shopt -s globstar nullglob
+          deb=(installers/**/*.deb)
+          rpm=(installers/**/*.rpm)
+          appimage=(installers/**/*.AppImage)
+          windows=(installers/**/*-setup.exe)
+          macos=(installers/**/*.dmg)
+          if (( ${#deb[@]} != 1 || ${#rpm[@]} != 1 || ${#appimage[@]} != 1 || ${#windows[@]} != 1 || ${#macos[@]} != 2 )); then
+            echo 'Expected deb, rpm, AppImage, NSIS, and two macOS DMGs; refusing incomplete release.' >&2
+            exit 1
+          fi
+          if draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft); then
+            if [[ "$draft" != true ]]; then
+              echo 'Refusing to modify a published release.' >&2
+              exit 1
+            fi
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "ntfy-native $RELEASE_TAG" --notes 'Unsigned installers: Linux x86_64 (deb/rpm/AppImage), Windows x86_64 (NSIS), macOS Apple Silicon and Intel (DMG). Verify installation and login autostart on each platform before publishing. Windows SmartScreen and macOS Gatekeeper may warn because code signing and notarization are not configured.'
+          fi
+          gh release upload "$RELEASE_TAG" "${deb[@]}" "${rpm[@]}" "${appimage[@]}" "${windows[@]}" "${macos[@]}" --clobber

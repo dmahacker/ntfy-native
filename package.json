@@ -9,7 +9,11 @@
     "build": "tsc && vite build",
     "test": "vitest run",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "package:linux": "tauri build --bundles deb,rpm,appimage",
+    "package:windows": "tauri build --bundles nsis",
+    "package:macos": "tauri build --bundles dmg",
+    "release:check": "node scripts/check-release-version.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

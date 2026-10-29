@@ -2,7 +2,7 @@
 name = "ntfy-native"
 version = "0.1.0"
 description = "Desktop client for ntfy"
-authors = ["you"]
+authors = ["dmahacker"]
 edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

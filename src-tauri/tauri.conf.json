@@ -29,6 +29,14 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "dmahacker",
+    "homepage": "https://github.com/dmahacker/ntfy-native",
+    "category": "Utility",
+    "shortDescription": "A lightweight ntfy desktop notification client",
+    "longDescription": "Subscribe to an ntfy topic with HTTP Basic Auth, receive desktop notifications, and keep listening in the system tray.",
+    "windows": {
+      "nsis": { "installMode": "currentUser" }
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
