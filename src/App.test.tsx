@@ -8,6 +8,9 @@ const mocks = vi.hoisted(() => ({ invoke: vi.fn(), listen: vi.fn(), permission: 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: mocks.listen }));
 vi.mock("@tauri-apps/plugin-notification", () => ({ isPermissionGranted: mocks.permission, requestPermission: mocks.request }));
+const updateMocks = vi.hoisted(() => ({ check: vi.fn(async () => null) }));
+vi.mock("@tauri-apps/plugin-updater", () => ({ check: updateMocks.check }));
+vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ isMaximized: async () => false, onResized: async () => () => {} }) }));
 const config = { server: "https://ntfy.example.com", topic: "alerts", username: "alice", password: "secret" };
 const snapshot = { revision: 0, status: "disconnected", detail: "尚未连接", notification_error: null as string | null, messages: [], view_mode: "settings", unread_count: 0, tray_available: true, tray_error: null as string | null };
 function backend(saved: typeof config | null = null, initial = snapshot) {
@@ -19,6 +22,17 @@ beforeEach(() => { mocks.listen.mockResolvedValue(vi.fn()); mocks.permission.moc
 afterEach(cleanup);
 
 describe("tray client windows", () => {
+  it("keeps the updater mounted across native view switches", async () => {
+    const original = mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation(async (command: string, args?: object) => command === "updater_supported" ? true : original(command, args));
+    render(<App />); await ready();
+    expect(await screen.findByText("已是最新版本")).toBeTruthy();
+    publish({ ...snapshot, revision: 1, view_mode: "messages" });
+    expect(screen.getByText("已是最新版本")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "关闭窗口" })).toBeTruthy();
+    publish({ ...snapshot, revision: 2, view_mode: "settings" });
+    expect(updateMocks.check).toHaveBeenCalledTimes(1);
+  });
   it("keeps sound settings independent when credentials are cleared", async () => {
     backend(config); render(<App />); await ready();
     await waitFor(() => expect(screen.getByRole("checkbox", { name: "新消息提示音" })).toHaveProperty("checked", true));

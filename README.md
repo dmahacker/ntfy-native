@@ -15,8 +15,10 @@
 - 托盘菜单「全部标为已读」立即清零未读计数、移除图标红点，不打开窗口、不删除消息；不清除系统通知中心中的通知。单击托盘仍保留原有菜单行为。
 - 每条新收到且通过去重的消息请求播放一次系统通知音（包括重连补收的未见消息），默认开启；设置页「新消息提示音」立即保存并生效，关闭声音不影响通知或订阅，清除连接凭据不改变声音设置。Linux 使用 XDG `message-new-instant`，macOS 使用 `Ping`，Windows 使用默认通知音。系统静音、勿扰模式、缺少声音主题或通知服务不支持声音时可能无声，不绕过系统策略。
 - 在连接设置中开启 / 关闭「登录后自动启动」，默认不创建登录项；直接读取系统登记状态，修改失败会提示。
+- 无边框窗口、自定义拖动标题栏及最小化 / 最大化 / 还原 / 关闭按钮；默认 1040×760、最小 960×680，连接与偏好设置一屏展示，消息列表内部滚动。
+- GitHub Releases 签名更新：启动后台检查，可手动检查，确认后才下载、校验签名、安装并重启；检查失败不影响订阅。
 
-消息列表仅保留当前连接最近 100 条，不落盘；手动重新连接会清空列表和未读计数，自动网络重连不会清空。**关闭窗口只隐藏到托盘，托盘菜单「退出」才会结束程序。** 未读数独立于列表长度，不跨进程保存。不含多主题、附件、自动更新或通知操作按钮。
+消息列表仅保留当前连接最近 100 条，不落盘；手动重新连接会清空列表和未读计数，自动网络重连不会清空。**有可用托盘时，关闭窗口只隐藏到托盘，托盘菜单「退出」才会结束程序；没有托盘时关闭窗口直接退出。** 未读数独立于列表长度，不跨进程保存。不含多主题、附件或通知操作按钮。
 
 ## 环境要求
 
@@ -71,6 +73,15 @@ Linux 的 deb/rpm 会声明 GTK、WebKitGTK 和 AppIndicator 依赖，但桌面�
 
 **请从最终安装路径开启。** 特别是 AppImage：先移到固定目录再启用；移动或重命名后应从新路径重新关闭 / 开启，以刷新登录项。不要从 `tauri dev` 或临时构建目录开启，否则登录项会指向开发程序。应用不会在未得到用户操作时自动登记登录项。
 
+### 应用更新
+
+- Windows NSIS、macOS 和 Linux AppImage 支持应用内更新。Linux deb/rpm 及开发运行不调用 updater，请通过软件包管理器或「前往 GitHub Releases」下载并手动安装。
+- 启动只检查，不自动下载安装、不弹出主窗口；「软件更新」显示检查结果。发现更新后，点击「下载更新并重启」才开始安装。Windows 安装器可能退出当前应用并重启；macOS / Linux 安装成功后由应用重启。请先完成当前操作。
+- 更新源是公开的 `https://github.com/dmahacker/ntfy-native/releases/latest/download/latest.json`，不包含 GitHub token。草稿和预发布不进入默认稳定更新通道。没有正式发布清单、GitHub 不可达或网络失败时会提示检查失败，可手动重试，不影响消息订阅。
+- **现有 v0.1.0 没有 updater，必须先手动安装一次带更新功能的新版本。** 不要重新使用已有 tag；以后每次更新都需要提升版本。
+- AppImage 请放在当前用户可写的固定目录；更新不会主动更改已有自启动登记。系统目录的权限、杀毒软件或系统安全策略可能阻止安装。
+- 更新包签名和 Windows 代码签名 / Apple 公证是两件事；本项目启用前者，不代表后两者已经配置。
+
 ## 安全与配置
 
 按当前第一版的设计，**密码以明文保存**，不是加密或 hash；HTTP Basic Auth 需要原始密码。不要共享配置文件或提交到版本库。能够读取本机当前用户文件的人也能取得密码。
@@ -104,10 +115,19 @@ cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 # 在对应系统打包（不是跨系统编译）
 pnpm package:linux       # deb + rpm + AppImage
 pnpm package:windows     # NSIS
-pnpm package:macos       # DMG
+pnpm package:macos       # DMG + 用于更新的 .app.tar.gz
 ```
 
 安装包默认输出到 `src-tauri/target/release/bundle/`。传入 `--target <triple>` 时输出到 `src-tauri/target/<triple>/release/bundle/`。需要固定 Cargo 依赖时，在打包命令后追加 `-- --locked`。Linux 打包还需 `librsvg`、`patchelf` 等工具；建议使用与 CI 一致的 Ubuntu 22.04 构建环境。
+
+已开启 `createUpdaterArtifacts`，本地打包也需要长期 updater 私钥（不可提交到仓库），例如：
+
+```bash
+TAURI_SIGNING_PRIVATE_KEY="$HOME/.config/ntfy-native-signing/updater.key" \
+TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" pnpm package:linux -- --locked
+```
+
+`TAURI_SIGNING_PRIVATE_KEY` 可指向仓库外的密钥文件；不要把私钥内容直接写进命令行或日志。加密密钥还需通过安全环境配置相应密码。只构建前端的 `pnpm build` 不需要签名密钥。
 
 ### GitHub Actions 发行
 
@@ -115,10 +135,28 @@ pnpm package:macos       # DMG
 
 - 手动运行 **Build installers**：仅生成 workflow artifacts（保留 14 天），不创建 Release；可先用它验证分支。
 - 正式准备版本时，同步更新 `package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` 及对应锁文件，执行 `pnpm release:check v<版本>` 验证，再提交并推送 `v<版本>` 标签。
-- 标签与三处版本号不一致会在构建前失败；全部构建成功且六个安装包齐全后才创建 / 更新该标签的 **草稿 Release**。不会自动发布，也不会覆盖已发布的 Release。
-- 维护者在各平台安装、验收通知 / 托盘 / 登录自启动后手动发布草稿。没有签名 / 公证配置，也没有自动更新功能。
+- 标签与三处版本号不一致、签名私钥缺失会在构建前失败；全部构建成功且六个安装包、四个平台的更新包及对应非空签名齐全后，生成 `latest.json` 并附加到 **草稿 Release**。不会自动发布，也不会覆盖已发布的 Release。macOS 更新归档会增加架构后缀，避免两种架构重名覆盖。
+- 维护者在各平台验收安装、签名更新、通知 / 托盘 / 登录自启动后手动发布草稿。`vX.Y.Z-rc.N` 等标签创建预发布草稿，不进入稳定更新通道。只有正式发布后的稳定 Release 才能被默认 updater 获取。尚无 Windows 代码签名 / Apple 公证。
 
 本地的 `.github/workflows/release.yml` 可使用 `actionlint` 检查；前端测试中也包含版本检查脚本的真实 CLI 测试。本机 Linux 构建成功不能代替 Windows / macOS 构建和安装验收。
+
+#### 长期 updater 签名密钥
+
+- GitHub 仓库 Actions Secrets 必须配置 `TAURI_SIGNING_PRIVATE_KEY`（**文件内容**）；加密密钥还需配置 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`。工作流只在签名步骤注入私钥，不上传私钥，不将其放进前端、日志或 artifacts。
+- 当前维护机长期私钥保存在仓库外 `~/.config/ntfy-native-signing/updater.key`，目录 `0700`、文件 `0600`；公钥为旁边的 `.pub`。当前密钥无密码，依赖本机文件权限及 GitHub Secret 保护，密码 Secret 可以省略。
+- **请将私钥离线安全备份，后续发行必须沿用。** GitHub Secret 不能反向下载作为备份；丢失私钥或随意替换公钥会使已安装版本无法验证后续更新。
+- `src-tauri/tauri.conf.json` 只保存公钥内容。密钥轮换需要专门的迁移方案，不要为每个 tag 重新生成密钥。
+
+#### 布局回归
+
+`pnpm dev` 启动后，可在已安装的 Playwright CLI 会话执行：
+
+```bash
+playwright cli open http://127.0.0.1:1420
+playwright cli run-code --filename scripts/check-layout.playwright.js
+```
+
+脚本完全替换 Tauri IPC，不读取真实配置、不修改自启动、不建立订阅。检查默认 / 最小尺寸、HTTP 警告、可展开长错误、150% 缩放等效 CSS 视口的局部滚动和 100 条长消息内部滚动；不代替真实 WebView / 操作系统缩放与原生窗口验收。
 
 ### 桌面验收
 
@@ -131,6 +169,8 @@ pnpm package:macos       # DMG
 7. 在无托盘支持的桌面启动，确认保留窗口和明确提示，保存配置不会隐藏，关闭窗口正常退出。检查本机配置文件权限，不要分享文件内容。
 8. 在最终安装路径开启「登录后自动启动」，注销并重新登录，确认只启动一个实例，且按是否已有连接配置正确显示托盘 / 设置；取消勾选后再次登录不启动。分别在 deb/rpm/AppImage、Windows NSIS 和两种 macOS 架构上验收。
 9. 系统登录项不可读 / 不可写时显示明确错误；清除连接配置不会改变自启动状态。AppImage 改名或移动后，从新路径关闭再开启，确认登录项指向新路径。
+10. 在 1040×760、960×680 检查连接设置完整显示；消息列表只在内部滚动。测试拖动、双击标题栏、最小化 / 最大化 / 还原 / 关闭，以及有 / 无托盘时的关闭行为。
+11. 用两个不同版本、同一密钥签名的真实包验证升级：草稿 / 预发布不提示稳定更新；正式发布后发现更新，确认前不下载，确认后显示进度、安装并重启；断网、签名不匹配和安装 / 重启失败时提示明确，订阅不受影响。Linux deb/rpm 必须走手动升级。
 
 无图形显示环境的构建 / 单元测试不能替代系统通知和原生窗口的实际验收。
 
@@ -154,9 +194,11 @@ node scripts/generate-icons.mjs
 - `src-tauri/src/lib.rs`：Tauri 命令、连接管理、重连、通知
 - `src-tauri/src/state.rs`：视图、前台状态、未读计数及启动决策
 - `src-tauri/src/tray.rs`：托盘菜单、四态图标及 Linux 支持检查
-- `src-tauri/capabilities/`：最小前端通知与自启动权限
+- `src-tauri/capabilities/`：前端通知、自启动、窗口控制及 updater / 重启 / 固定发行页打开权限
 - `src/AutostartSetting.tsx`：系统登录自启动开关
 - `scripts/check-release-version.mjs`：标签与三处版本一致性检查
+- `src/UpdateSetting.tsx` / `src/WindowTitlebar.tsx`：更新确认流程和原生窗口控制
+- `scripts/create-update-manifest.mjs`：验证完整发行产物并生成四平台 updater 清单
 - `.github/workflows/release.yml`：跨平台安装包与草稿 Release
 
 应用标识暂定为 `com.ntfy.native`，正式发布前应改为自己拥有的唯一标识。

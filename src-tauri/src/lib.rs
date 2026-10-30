@@ -383,10 +383,25 @@ async fn run_subscription(
     }
 }
 
+#[tauri::command]
+fn updater_supported(app: AppHandle) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        app.env().appimage.is_some()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = app;
+        true
+    }
+}
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_opener::Builder::new().build())
         .plugin({
             let builder = tauri_plugin_autostart::Builder::new();
             #[cfg(target_os = "macos")]
@@ -433,6 +448,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             load_settings,
             get_snapshot,
+            updater_supported,
             get_sound_enabled,
             set_sound_enabled,
             connect,

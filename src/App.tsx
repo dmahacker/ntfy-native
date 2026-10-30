@@ -4,6 +4,8 @@ import { listen } from "@tauri-apps/api/event";
 import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 import AutostartSetting from "./AutostartSetting";
 import SoundSetting from "./SoundSetting";
+import UpdateSetting from "./UpdateSetting";
+import WindowTitlebar from "./WindowTitlebar";
 import "./App.css";
 
 interface Config { server: string; topic: string; username: string; password: string }
@@ -90,9 +92,11 @@ function App() {
   }
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell view-${snapshot.view_mode}`}>
+      <WindowTitlebar />
+      <div className="app-content">
       <header className="app-header">
-        <div><span className="eyebrow">YOUR NOTIFICATIONS, ON YOUR DESKTOP</span><h1>ntfy<span>native</span></h1></div>
+        <div><span className="eyebrow">YOUR NOTIFICATIONS, ON YOUR DESKTOP</span><h1>{snapshot.view_mode === "settings" ? "连接与偏好" : "消息中心"}</h1></div>
         <span className={`status-badge ${snapshot.status}`}><span aria-hidden="true">●</span> {statusLabels[snapshot.status] ?? "未连接"}</span>
       </header>
       <nav className="view-navigation" aria-label="窗口视图">
@@ -101,10 +105,13 @@ function App() {
       </nav>
       <div className="window-feedback">
         <p className="connection-detail" role="status">{busy ? "正在处理…" : snapshot.detail || "尚未连接"}</p>
-        {error && <p className="error" role="alert">{error}</p>}
-        {permissionWarning && <p className="warning" role="alert">{permissionWarning}</p>}
-        {snapshot.notification_error && <p className="warning" role="alert">{snapshot.notification_error}</p>}
-        {snapshot.tray_error && <p className="warning" role="alert">{snapshot.tray_error}</p>}
+        {[error, permissionWarning, snapshot.notification_error, snapshot.tray_error].filter(Boolean).length > 0 && <details className="feedback-details">
+          <summary>需要留意：{[error, permissionWarning, snapshot.notification_error, snapshot.tray_error].filter(Boolean).length} 项提示（展开查看）</summary>
+          {error && <p className="error" role="alert">{error}</p>}
+          {permissionWarning && <p className="warning" role="alert">{permissionWarning}</p>}
+          {snapshot.notification_error && <p className="warning" role="alert">{snapshot.notification_error}</p>}
+          {snapshot.tray_error && <p className="warning" role="alert">{snapshot.tray_error}</p>}
+        </details>}
       </div>
       <div className="workspace">
         {snapshot.view_mode === "settings" && <section className="panel settings" aria-labelledby="settings-title">
@@ -112,14 +119,14 @@ function App() {
           <p className="muted">保存后在托盘中接收消息，需要时再打开这里。</p>
           <form onSubmit={event => { event.preventDefault(); void action("connect"); }}>
             <fieldset disabled={busy}>
-              <label htmlFor="server">服务器地址</label>
-              <input id="server" type="url" required placeholder="https://ntfy.example.com" value={config.server} onChange={event => field("server", event.target.value)} autoCapitalize="none" spellCheck={false} />
-              <label htmlFor="topic">订阅主题</label>
-              <input id="topic" required maxLength={64} pattern="[A-Za-z0-9_-]+" placeholder="my-alerts" value={config.topic} onChange={event => field("topic", event.target.value)} autoCapitalize="none" spellCheck={false} />
-              <label htmlFor="username">用户名</label>
-              <input id="username" required autoComplete="username" value={config.username} onChange={event => field("username", event.target.value)} autoCapitalize="none" spellCheck={false} />
-              <label htmlFor="password">密码</label>
-              <input id="password" type="password" required autoComplete="current-password" value={config.password} onChange={event => field("password", event.target.value)} />
+              <div className="form-field"><label htmlFor="server">服务器地址</label>
+              <input id="server" type="url" required placeholder="https://ntfy.example.com" value={config.server} onChange={event => field("server", event.target.value)} autoCapitalize="none" spellCheck={false} /></div>
+              <div className="form-field"><label htmlFor="topic">订阅主题</label>
+              <input id="topic" required maxLength={64} pattern="[A-Za-z0-9_-]+" placeholder="my-alerts" value={config.topic} onChange={event => field("topic", event.target.value)} autoCapitalize="none" spellCheck={false} /></div>
+              <div className="form-field"><label htmlFor="username">用户名</label>
+              <input id="username" required autoComplete="username" value={config.username} onChange={event => field("username", event.target.value)} autoCapitalize="none" spellCheck={false} /></div>
+              <div className="form-field"><label htmlFor="password">密码</label>
+              <input id="password" type="password" required autoComplete="current-password" value={config.password} onChange={event => field("password", event.target.value)} /></div>
               <p className="security-note">配置会自动保留，密码以明文存储在本机应用配置目录。请勿共享配置文件。</p>
               {config.server.trim().toLowerCase().startsWith("http:") && <p className="warning">HTTP 会以明文传输用户名、密码和消息，建议使用 HTTPS。</p>}
               <button className="primary" type="submit">保存并连接</button>
@@ -129,8 +136,6 @@ function App() {
               </div>
             </fieldset>
           </form>
-          <AutostartSetting />
-          <SoundSetting />
         </section>}
         {snapshot.view_mode === "messages" && <section className="panel feed" aria-labelledby="feed-title">
           <div className="feed-header"><h2 id="feed-title">消息</h2><span className="count">{snapshot.messages.length} / 100</span></div>
@@ -145,8 +150,13 @@ function App() {
             ))}</ol>
           )}
         </section>}
+        <aside className="panel preferences" aria-label="应用偏好">
+          <div hidden={snapshot.view_mode !== "settings"} className="connection-preferences"><AutostartSetting /><SoundSetting /></div>
+          <UpdateSetting />
+        </aside>
       </div>
       <footer>仅保留当前连接最近 100 条消息 · {snapshot.tray_available ? "关闭窗口后仍在托盘接收，通过托盘菜单退出" : "关闭窗口将退出程序"}</footer>
+      </div>
     </main>
   );
 }

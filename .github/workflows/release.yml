@@ -28,6 +28,15 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: node scripts/check-release-version.mjs "$RELEASE_TAG"
+      - name: Require updater signing key
+        shell: bash
+        env:
+          SIGNING_KEY_CONFIGURED: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+        run: |
+          if [[ "$SIGNING_KEY_CONFIGURED" != true ]]; then
+            echo 'Configure TAURI_SIGNING_PRIVATE_KEY in repository Actions secrets before building updater artifacts.' >&2
+            exit 1
+          fi
 
   build:
     needs: validate
@@ -43,10 +52,10 @@ jobs:
             bundles: nsis
           - os: macos-15
             target: aarch64-apple-darwin
-            bundles: dmg
+            bundles: app,dmg
           - os: macos-15-intel
             target: x86_64-apple-darwin
-            bundles: dmg
+            bundles: app,dmg
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -75,7 +84,24 @@ jobs:
       - run: cargo test --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }} --locked
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }} --locked --all-targets -- -D warnings
       - name: Build installers
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} -- --locked
+      - name: Give macOS updater archives unique architecture names
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          archives=(src-tauri/target/"$TARGET"/release/bundle/macos/*.app.tar.gz)
+          (( ${#archives[@]} == 1 ))
+          archive=${archives[0]}
+          renamed="${archive%.app.tar.gz}_$TARGET.app.tar.gz"
+          mv "$archive" "$renamed"
+          mv "$archive.sig" "$renamed.sig"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: installers-${{ matrix.target }}
@@ -87,6 +113,10 @@ jobs:
             src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
             src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*-setup.exe
             src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+            src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage.sig
+            src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*-setup.exe.sig
+            src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app.tar.gz
+            src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app.tar.gz.sig
 
   release:
     needs: build
@@ -95,12 +125,18 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: installers-*
           path: installers
-          merge-multiple: true
-      - name: Attach all installers to a draft release
+          merge-multiple: false
+      - name: Attach installers and signed updater manifest to a draft release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -109,21 +145,17 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s globstar nullglob
-          deb=(installers/**/*.deb)
-          rpm=(installers/**/*.rpm)
-          appimage=(installers/**/*.AppImage)
-          windows=(installers/**/*-setup.exe)
-          macos=(installers/**/*.dmg)
-          if (( ${#deb[@]} != 1 || ${#rpm[@]} != 1 || ${#appimage[@]} != 1 || ${#windows[@]} != 1 || ${#macos[@]} != 2 )); then
-            echo 'Expected deb, rpm, AppImage, NSIS, and two macOS DMGs; refusing incomplete release.' >&2
-            exit 1
-          fi
+          node scripts/create-update-manifest.mjs installers "$RELEASE_TAG" latest.json
+          assets=(installers/**/*.deb installers/**/*.rpm installers/**/*.AppImage installers/**/*-setup.exe installers/**/*.dmg installers/**/*.app.tar.gz installers/**/*.sig)
           if draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft); then
             if [[ "$draft" != true ]]; then
               echo 'Refusing to modify a published release.' >&2
               exit 1
             fi
           else
-            gh release create "$RELEASE_TAG" --verify-tag --draft --title "ntfy-native $RELEASE_TAG" --notes 'Unsigned installers: Linux x86_64 (deb/rpm/AppImage), Windows x86_64 (NSIS), macOS Apple Silicon and Intel (DMG). Verify installation and login autostart on each platform before publishing. Windows SmartScreen and macOS Gatekeeper may warn because code signing and notarization are not configured.'
+            release_flags=()
+            version_without_build=${RELEASE_TAG%%+*}
+            if [[ "$version_without_build" == *-* ]]; then release_flags+=(--prerelease); fi
+            gh release create "$RELEASE_TAG" --verify-tag --draft "${release_flags[@]}" --title "ntfy-native $RELEASE_TAG" --notes 'Linux x86_64 (deb/rpm/AppImage), Windows x86_64 (NSIS), macOS Apple Silicon and Intel (DMG). Includes signed updater packages and latest.json; only published stable releases reach the default updater endpoint. Verify installation, updates and login autostart on each platform before publishing. Updater signatures are not OS code signing: Windows SmartScreen and macOS Gatekeeper may warn because code signing and notarization are not configured.'
           fi
-          gh release upload "$RELEASE_TAG" "${deb[@]}" "${rpm[@]}" "${appimage[@]}" "${windows[@]}" "${macos[@]}" --clobber
+          gh release upload "$RELEASE_TAG" "${assets[@]}" latest.json --clobber

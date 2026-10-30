@@ -15,10 +15,11 @@
         "title": "ntfy-native",
         "visible": false,
         "skipTaskbar": true,
+        "decorations": false,
         "width": 1040,
         "height": 760,
-        "minWidth": 400,
-        "minHeight": 550
+        "minWidth": 960,
+        "minHeight": 680
       }
     ],
     "security": {
@@ -29,6 +30,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "publisher": "dmahacker",
     "homepage": "https://github.com/dmahacker/ntfy-native",
     "category": "Utility",
@@ -44,5 +46,11 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ4RkNFNkFDNUNGNDkwREUKUldUZWtQUmNyT2I4U0NLYjJZNzNVaDZoTlJ2eTlJNktudnNXRCt2Syt1cGYvNnlHVHd5aFNjWk4K",
+      "endpoints": ["https://github.com/dmahacker/ntfy-native/releases/latest/download/latest.json"]
+    }
   }
 }
